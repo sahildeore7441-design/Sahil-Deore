@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { List, Map as MapIcon, Filter, Search, Clock, CheckCircle2, AlertTriangle, ArrowRight, Info, Plus } from 'lucide-react';
 import { Issue, User, IssueStatus, IssueType, Severity, Language } from '../types';
 import { getTranslation, formatTimeAgo, getTimeToFix } from '../utils';
@@ -11,17 +11,18 @@ interface HomeProps {
   onViewIssue: (id: string) => void;
 }
 
+// Global Maharashtra defaults
+const MAHARASHTRA_CENTER = { lat: 19.7515, lng: 75.7139 };
+const MAHARASHTRA_ZOOM = 6;
+
 export const calculateCivicHealth = (cityIssues: Issue[]) => {
   let score = 100;
-  
   const unresolvedIssues = cityIssues.filter(i => i.status !== IssueStatus.FIXED);
   
   if (unresolvedIssues.length > 0) {
-    // -10 points for the first unresolved issue, additional for more
     score = 100 - (unresolvedIssues.length * 10);
   }
 
-  // Cap score between 0 and 100
   return Math.max(0, Math.min(100, score));
 };
 
@@ -35,6 +36,8 @@ const HomeScreen: React.FC<HomeProps> = ({ issues, user, onViewIssue }) => {
     ward: 'all'
   });
   const [showFilters, setShowFilters] = useState(false);
+  const [mapLoaded, setMapLoaded] = useState(false);
+  const mapContainerRef = useRef<HTMLDivElement>(null);
 
   const lang = user.preferredLanguage;
 
@@ -54,13 +57,49 @@ const HomeScreen: React.FC<HomeProps> = ({ issues, user, onViewIssue }) => {
     return calculateCivicHealth(cityIssues);
   }, [issues, user.city]);
 
-  const selectedCityData = useMemo(() => {
-    return MAHARASHTRA_CITIES.find(c => c.name === (filters.city === 'all' ? user.city : filters.city)) 
-      || MAHARASHTRA_CITIES.find(c => c.name === 'Mumbai')!;
-  }, [filters.city, user.city]);
+  // Map settings logic - Dynamic update based on filters
+  const mapConfig = useMemo(() => {
+    if (filters.city === 'all') {
+      return {
+        lat: MAHARASHTRA_CENTER.lat,
+        lng: MAHARASHTRA_CENTER.lng,
+        zoom: MAHARASHTRA_ZOOM,
+        isStateView: true
+      };
+    }
 
-  const isMumbai = selectedCityData.name === 'Mumbai';
-  const zoomLevel = isMumbai ? 12 : 14;
+    const cityData = MAHARASHTRA_CITIES.find(c => c.name === filters.city);
+    if (!cityData) {
+      return {
+        lat: MAHARASHTRA_CENTER.lat,
+        lng: MAHARASHTRA_CENTER.lng,
+        zoom: MAHARASHTRA_ZOOM,
+        isStateView: true
+      };
+    }
+
+    const isMumbai = cityData.name === 'Mumbai';
+    return {
+      lat: cityData.lat,
+      lng: cityData.lng,
+      zoom: isMumbai ? 12 : 13,
+      isStateView: false
+    };
+  }, [filters.city]);
+
+  // Force re-render/resize simulation when switching to map
+  useEffect(() => {
+    if (viewType === 'map') {
+      // Small delay to ensure container layout is finished (non-zero width/height)
+      const timer = setTimeout(() => {
+        setMapLoaded(true);
+        console.log("Map resized and centered at:", mapConfig.lat, mapConfig.lng);
+      }, 50);
+      return () => clearTimeout(timer);
+    } else {
+      setMapLoaded(false);
+    }
+  }, [viewType, mapConfig]);
 
   return (
     <div className="space-y-6">
@@ -124,7 +163,7 @@ const HomeScreen: React.FC<HomeProps> = ({ issues, user, onViewIssue }) => {
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
             <input 
               placeholder="Search reports..."
-              className="w-full pl-10 pr-4 py-2 bg-slate-50 rounded-xl border-none text-sm focus:ring-2 focus:ring-orange-500 text-black"
+              className="w-full pl-10 pr-4 py-2 bg-slate-50 rounded-xl border-none text-sm focus:ring-2 focus:ring-orange-500 text-black placeholder:text-[#666666]"
             />
           </div>
         </div>
@@ -173,7 +212,7 @@ const HomeScreen: React.FC<HomeProps> = ({ issues, user, onViewIssue }) => {
               value={filters.city}
               onChange={(e) => setFilters(f => ({ ...f, city: e.target.value }))}
             >
-              <option value="all">All Cities</option>
+              <option value="all">Maharashtra View</option>
               {CITIES.map(c => <option key={c} value={c}>{c}</option>)}
             </select>
           </div>
@@ -200,7 +239,11 @@ const HomeScreen: React.FC<HomeProps> = ({ issues, user, onViewIssue }) => {
                 <Info size={32} />
               </div>
               <h3 className="text-slate-900 font-bold">No issues found</h3>
-              <p className="text-slate-400 text-sm max-w-xs mx-auto mt-1">Be the first to report a civic problem in {selectedCityData.name} and improve your city's health score.</p>
+              <p className="text-slate-400 text-sm max-w-xs mx-auto mt-1">
+                {filters.city === 'all' 
+                  ? "Explore different cities or report a new problem."
+                  : `Be the first to report a civic problem in ${filters.city} and improve your city's health score.`}
+              </p>
             </div>
           ) : (
             filteredIssues.map((issue) => (
@@ -279,31 +322,42 @@ const HomeScreen: React.FC<HomeProps> = ({ issues, user, onViewIssue }) => {
           )}
         </div>
       ) : (
-        <div className="h-[60vh] bg-slate-200 rounded-3xl overflow-hidden relative border-4 border-white shadow-xl">
+        <div 
+          ref={mapContainerRef}
+          className="h-[60vh] min-h-[400px] w-full bg-slate-100 rounded-3xl overflow-hidden relative border-4 border-white shadow-xl"
+        >
+          {/* Tile Rendering Simulation - Using a more reliable tile background pattern */}
           <div 
-            className="absolute inset-0 bg-cover bg-center transition-all duration-700"
+            className={`absolute inset-0 bg-cover bg-center transition-opacity duration-700 ${mapLoaded ? 'opacity-100' : 'opacity-0'}`}
             style={{ 
-              backgroundImage: `url('https://maps.googleapis.com/maps/api/staticmap?center=${selectedCityData.lat},${selectedCityData.lng}&zoom=${zoomLevel}&size=1000x1000&key=MOCK_KEY')` 
+              backgroundImage: `url('https://maps.googleapis.com/maps/api/staticmap?center=${mapConfig.lat},${mapConfig.lng}&zoom=${mapConfig.zoom}&size=1000x1000&scale=2&maptype=roadmap&key=AIzaSy_MOCK_KEY')`,
+              backgroundColor: '#e5e7eb' // Solid grey fallback during load
             }}
           >
-            {filteredIssues.map((issue) => {
-              const top = 50 + (issue.location.lat - selectedCityData.lat) * (isMumbai ? 200 : 500);
-              const left = 50 + (issue.location.lng - selectedCityData.lng) * (isMumbai ? 200 : 500);
+            {/* Markers placement logic */}
+            {mapLoaded && filteredIssues.map((issue) => {
+              // Coordinate mapping logic for mock map
+              const multiplier = mapConfig.isStateView ? 12 : (filters.city === 'Mumbai' ? 240 : 450);
+              const top = 50 - (issue.location.lat - mapConfig.lat) * multiplier;
+              const left = 50 + (issue.location.lng - mapConfig.lng) * multiplier;
+
+              // Constrain markers within visible bounds
+              if (top < 5 || top > 95 || left < 5 || left > 95) return null;
 
               return (
                 <div 
                   key={issue.id}
                   onClick={() => onViewIssue(issue.id)}
-                  className={`absolute w-8 h-8 rounded-full border-2 border-white flex items-center justify-center cursor-pointer shadow-lg animate-bounce hover:scale-125 transition-transform z-10 ${
+                  className={`absolute w-9 h-9 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white flex items-center justify-center cursor-pointer shadow-lg hover:scale-125 transition-transform z-10 ${
                     issue.status === IssueStatus.FIXED ? 'bg-green-500' : 
                     issue.severity === Severity.CRITICAL ? 'bg-red-500' : 'bg-orange-500'
                   }`}
                   style={{
-                    top: `${Math.max(10, Math.min(90, top))}%`,
-                    left: `${Math.max(10, Math.min(90, left))}%`
+                    top: `${top}%`,
+                    left: `${left}%`
                   }}
                 >
-                  <div className="text-white text-xs">
+                  <div className="text-white text-sm drop-shadow-sm">
                     {issue.type === IssueType.POTHOLE && '🕳️'}
                     {issue.type === IssueType.GARBAGE && '🗑️'}
                     {issue.type === IssueType.STREETLIGHT && '💡'}
@@ -314,14 +368,24 @@ const HomeScreen: React.FC<HomeProps> = ({ issues, user, onViewIssue }) => {
               );
             })}
           </div>
-          <div className="absolute bottom-4 left-4 right-4 bg-white/90 backdrop-blur-md p-3 rounded-2xl flex items-center justify-between shadow-2xl">
+
+          {!mapLoaded && (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-50 gap-3">
+              <div className="w-10 h-10 border-4 border-orange-200 border-t-orange-500 rounded-full animate-spin"></div>
+              <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Loading Map Tiles...</p>
+            </div>
+          )}
+
+          <div className="absolute bottom-4 left-4 right-4 bg-white/95 backdrop-blur-md p-3 rounded-2xl flex items-center justify-between shadow-2xl border border-white">
             <div>
-               <p className="text-xs font-black text-slate-800 uppercase tracking-tight">{selectedCityData.name} Area Map</p>
-               <p className="text-[10px] font-bold text-slate-500 uppercase">{filteredIssues.length} active reports</p>
+               <p className="text-xs font-black text-slate-800 uppercase tracking-tight">
+                 {filters.city === 'all' ? 'Maharashtra State Overview' : `${filters.city} Area Map`}
+               </p>
+               <p className="text-[10px] font-bold text-slate-500 uppercase">{filteredIssues.length} real-time reports found</p>
             </div>
             <div className="flex gap-4">
-              <div className="flex items-center gap-1"><div className="w-2 h-2 bg-red-500 rounded-full"></div><span className="text-[10px] font-bold">CRITICAL</span></div>
-              <div className="flex items-center gap-1"><div className="w-2 h-2 bg-green-500 rounded-full"></div><span className="text-[10px] font-bold">FIXED</span></div>
+              <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 bg-red-500 rounded-full"></div><span className="text-[10px] font-bold">CRITICAL</span></div>
+              <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 bg-green-500 rounded-full"></div><span className="text-[10px] font-bold">FIXED</span></div>
             </div>
           </div>
         </div>
