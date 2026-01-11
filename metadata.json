@@ -1,0 +1,8 @@
+{
+  "name": "FixMyCity – Maharashtra",
+  "description": "A comprehensive civic reporting platform for Maharashtra citizens to report municipal issues, track resolutions, and promote civic accountability through transparency and leaderboards.",
+  "requestFramePermissions": [
+    "camera",
+    "geolocation"
+  ]
+}
